@@ -79,11 +79,50 @@ func TestCharge(t *testing.T) {
 		}
 	})
 
-	t.Run("nil receiver is no-op", func(t *testing.T) {
+	t.Run("nil receiver panics", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Charge on nil receiver did not panic")
+			}
+		}()
 		var b *Budget
-		if err := b.Charge(1 << 30); err != nil {
-			t.Fatal(err)
+		_ = b.Charge(1)
+	})
+}
+
+func TestAvailable(t *testing.T) {
+	t.Run("predicts next charge", func(t *testing.T) {
+		b := New(1000)
+		// Available reports the largest n that Charge(n) accepts, so
+		// the perAllocOverhead surcharge is already deducted.
+		if got, want := b.Available(), int64(1000-perAllocOverhead); got != want {
+			t.Errorf("Available = %d, want %d", got, want)
 		}
+		// charging exactly Available must succeed and leave Available at zero
+		if err := b.Charge(int(b.Available())); err != nil {
+			t.Fatalf("Charge(Available): %v", err)
+		}
+		if got := b.Available(); got != 0 {
+			t.Errorf("Available after draining = %d, want 0", got)
+		}
+	})
+
+	t.Run("clamps at zero", func(t *testing.T) {
+		// remaining below the surcharge can never satisfy any Charge
+		b := New(perAllocOverhead - 1)
+		if got := b.Available(); got != 0 {
+			t.Errorf("Available = %d, want 0", got)
+		}
+	})
+
+	t.Run("nil receiver panics", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Available on nil receiver did not panic")
+			}
+		}()
+		var b *Budget
+		_ = b.Available()
 	})
 }
 
@@ -182,14 +221,13 @@ func TestAllocSlice(t *testing.T) {
 		}
 	})
 
-	t.Run("nil receiver", func(t *testing.T) {
-		s, err := AllocSlice[uint16](nil, 5)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(s) != 5 {
-			t.Errorf("len = %d, want 5", len(s))
-		}
+	t.Run("nil receiver panics", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("AllocSlice with nil budget did not panic")
+			}
+		}()
+		_, _ = AllocSlice[uint16](nil, 5)
 	})
 
 	t.Run("negative n", func(t *testing.T) {

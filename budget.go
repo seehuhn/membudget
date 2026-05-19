@@ -49,10 +49,12 @@ const (
 var ErrExceeded = errors.New("membudget: budget exceeded")
 
 // Budget tracks the remaining memory budget for a single parse.
-// Callers that do not opt in to budget tracking can pass a nil *Budget;
-// in that case every charge succeeds.
+// Budget is safe for concurrent use; charges from multiple goroutines
+// are serialised internally.
 //
-// Budget is safe for concurrent use.
+// Callers that genuinely do not want a cap should construct a
+// permissive budget with [New] and a generous limit; a nil *Budget is
+// not supported.
 type Budget struct {
 	mu        sync.Mutex
 	remaining int64
@@ -67,14 +69,10 @@ func New(remaining int64) *Budget {
 	return &Budget{remaining: remaining}
 }
 
-// Charge subtracts (bytes + perAllocOverhead) from the budget.  A nil
-// receiver is a no-op, so callers without budget tracking pass through.
-// On exhaustion the budget is left unchanged and [ErrExceeded] is
-// returned.
+// Charge subtracts (bytes + perAllocOverhead) from the budget.  On
+// exhaustion the budget is left unchanged and [ErrExceeded] is
+// returned.  Panics if b is nil.
 func (b *Budget) Charge(bytes int) error {
-	if b == nil {
-		return nil
-	}
 	if bytes < 0 {
 		return ErrExceeded
 	}
@@ -91,9 +89,22 @@ func (b *Budget) Charge(bytes int) error {
 	return nil
 }
 
+// Available returns the largest n for which a subsequent
+// [Budget.Charge](n) would not return [ErrExceeded].  The value is a
+// hint only: a concurrent Charge may shrink the budget between an
+// Available call and a subsequent Charge, so callers must still treat
+// the eventual Charge as authoritative.  Panics if b is nil.
+func (b *Budget) Available() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.remaining <= perAllocOverhead {
+		return 0
+	}
+	return b.remaining - perAllocOverhead
+}
+
 // AllocSlice charges b for a slice of n elements of T and, if the
-// charge succeeds, returns make([]T, n).  A nil budget skips the
-// check and always allocates.
+// charge succeeds, returns make([]T, n).  Panics if b is nil.
 //
 // For slice, map, interface, or string element types, only the header
 // size is charged here; the referenced elements (slice backing array,
