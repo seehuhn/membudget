@@ -20,12 +20,13 @@
 // never grants memory back, so it bounds peak memory at most by the
 // total it was sized for.
 //
-// The budget is not safe for concurrent use.  Each parse should own
-// its own [Budget] and use it from a single goroutine.
+// [Budget] is safe for concurrent use; charges from multiple
+// goroutines are serialised internally.
 package membudget
 
 import (
 	"errors"
+	"sync"
 	"unsafe"
 )
 
@@ -51,8 +52,9 @@ var ErrExceeded = errors.New("membudget: budget exceeded")
 // Callers that do not opt in to budget tracking can pass a nil *Budget;
 // in that case every charge succeeds.
 //
-// Budget is not safe for concurrent use.
+// Budget is safe for concurrent use.
 type Budget struct {
+	mu        sync.Mutex
 	remaining int64
 }
 
@@ -80,6 +82,8 @@ func (b *Budget) Charge(bytes int) error {
 	if cost < int64(bytes) { // overflow guard
 		return ErrExceeded
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.remaining < cost {
 		return ErrExceeded
 	}

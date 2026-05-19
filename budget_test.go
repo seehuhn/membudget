@@ -18,6 +18,8 @@ package membudget
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -96,6 +98,41 @@ func TestSurcharge(t *testing.T) {
 	}
 	if err := b.Charge(0); !errors.Is(err, ErrExceeded) {
 		t.Fatalf("11th charge: err = %v, want ErrExceeded", err)
+	}
+}
+
+// TestConcurrentCharge exercises Charge from many goroutines and
+// verifies that exactly as many charges succeed as the budget allows
+// for, with no over-debit and no race-detector report.
+func TestConcurrentCharge(t *testing.T) {
+	const (
+		goroutines = 32
+		perCall    = 8
+		// each Charge costs perCall + perAllocOverhead bytes
+	)
+	costPerCall := int64(perCall + perAllocOverhead)
+	const want = 100 // expected successful charges
+	b := New(costPerCall * want)
+
+	var success atomic.Int64
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for {
+				if err := b.Charge(perCall); err != nil {
+					return
+				}
+				success.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+
+	if got := success.Load(); got != want {
+		t.Errorf("successful charges = %d, want %d", got, want)
+	}
+	if b.remaining != 0 {
+		t.Errorf("remaining = %d, want 0", b.remaining)
 	}
 }
 
