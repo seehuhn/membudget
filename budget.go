@@ -48,6 +48,12 @@ const (
 // push the budget below zero.
 var ErrExceeded = errors.New("membudget: budget exceeded")
 
+// ErrInvalid is returned when a requested size is not a sensible
+// allocation size: a negative byte count or element count, or a size so
+// large it cannot be represented.  It signals a caller bug rather than
+// an exhausted budget, so it is distinct from [ErrExceeded].
+var ErrInvalid = errors.New("membudget: invalid size")
+
 // Budget tracks the remaining memory budget for a single parse.
 // Budget is safe for concurrent use; charges from multiple goroutines
 // are serialised internally.
@@ -71,14 +77,15 @@ func New(remaining int64) *Budget {
 
 // Charge subtracts (bytes + perAllocOverhead) from the budget.  On
 // exhaustion the budget is left unchanged and [ErrExceeded] is
-// returned.  Panics if b is nil.
+// returned.  A negative bytes, or one large enough to overflow the
+// internal accounting, returns [ErrInvalid].  Panics if b is nil.
 func (b *Budget) Charge(bytes int) error {
 	if bytes < 0 {
-		return ErrExceeded
+		return ErrInvalid
 	}
 	cost := int64(bytes) + perAllocOverhead
 	if cost < int64(bytes) { // overflow guard
-		return ErrExceeded
+		return ErrInvalid
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -110,16 +117,18 @@ func (b *Budget) Available() int64 {
 // size is charged here; the referenced elements (slice backing array,
 // map buckets, interface body, or string bytes) must be charged
 // separately when allocated.
+//
+// A negative n, or one whose byte count overflows, returns [ErrInvalid].
 func AllocSlice[T any](b *Budget, n int) ([]T, error) {
 	var zero T
 	size := int(unsafe.Sizeof(zero))
 	if n < 0 {
-		return nil, ErrExceeded
+		return nil, ErrInvalid
 	}
 	// overflow-safe multiplication for the byte count
 	bytes := n * size
 	if size != 0 && bytes/size != n {
-		return nil, ErrExceeded
+		return nil, ErrInvalid
 	}
 	if err := b.Charge(bytes); err != nil {
 		return nil, err

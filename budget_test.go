@@ -65,8 +65,8 @@ func TestCharge(t *testing.T) {
 
 	t.Run("negative size errors", func(t *testing.T) {
 		b := New(1000)
-		if err := b.Charge(-1); !errors.Is(err, ErrExceeded) {
-			t.Fatalf("err = %v, want ErrExceeded", err)
+		if err := b.Charge(-1); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
 
@@ -74,8 +74,8 @@ func TestCharge(t *testing.T) {
 		// bytes + perAllocOverhead must not wrap around int64
 		b := New(1 << 62)
 		const maxInt = int(^uint(0) >> 1)
-		if err := b.Charge(maxInt); !errors.Is(err, ErrExceeded) {
-			t.Fatalf("err = %v, want ErrExceeded", err)
+		if err := b.Charge(maxInt); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
 
@@ -232,16 +232,16 @@ func TestAllocSlice(t *testing.T) {
 
 	t.Run("negative n", func(t *testing.T) {
 		b := New(1000)
-		if _, err := AllocSlice[uint16](b, -1); !errors.Is(err, ErrExceeded) {
-			t.Fatalf("err = %v, want ErrExceeded", err)
+		if _, err := AllocSlice[uint16](b, -1); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
 
 	t.Run("multiplication overflow", func(t *testing.T) {
 		// pick an n where n * sizeof(uint16) overflows
 		s, err := AllocSlice[uint16](New(1<<40), int(^uint(0)>>1))
-		if !errors.Is(err, ErrExceeded) {
-			t.Fatalf("err = %v, want ErrExceeded", err)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 		if s != nil {
 			t.Errorf("got slice %v, want nil", s)
