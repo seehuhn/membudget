@@ -175,6 +175,63 @@ func TestConcurrentCharge(t *testing.T) {
 	}
 }
 
+func TestChargeN(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		b := New(1000)
+		before := b.remaining
+		if err := b.ChargeN(10, 8); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := before-b.remaining, int64(10*8+perAllocOverhead); got != want {
+			t.Errorf("consumed = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("zero size", func(t *testing.T) {
+		b := New(1000)
+		if err := b.ChargeN(1<<30, 0); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+	})
+
+	t.Run("exhaustion", func(t *testing.T) {
+		b := New(10)
+		if err := b.ChargeN(1000, 8); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
+		}
+		if b.remaining != 10 {
+			t.Errorf("remaining = %d, want 10", b.remaining)
+		}
+	})
+
+	t.Run("negative", func(t *testing.T) {
+		b := New(1000)
+		if err := b.ChargeN(-1, 8); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+		if err := b.ChargeN(8, -1); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
+
+	t.Run("multiplication overflow", func(t *testing.T) {
+		b := New(1 << 40)
+		if err := b.ChargeN(int(^uint(0)>>1), 8); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
+
+	t.Run("nil receiver panics", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("ChargeN on nil receiver did not panic")
+			}
+		}()
+		var b *Budget
+		_ = b.ChargeN(1, 1)
+	})
+}
+
 func TestAllocSlice(t *testing.T) {
 	t.Run("uint16", func(t *testing.T) {
 		b := New(1000)

@@ -96,6 +96,24 @@ func (b *Budget) Charge(bytes int) error {
 	return nil
 }
 
+// ChargeN charges b for n elements of size bytes each, computing the total
+// with overflow checking.  Use it when charging a homogeneous batch whose
+// per-element size is computed at runtime rather than taken from a Go type;
+// use [AllocSlice] when the element type is statically known.
+//
+// A negative n or size, or a total that overflows, returns [ErrInvalid].
+// Panics if b is nil.
+func (b *Budget) ChargeN(n, size int) error {
+	if n < 0 || size < 0 {
+		return ErrInvalid
+	}
+	bytes := n * size
+	if size != 0 && bytes/size != n {
+		return ErrInvalid
+	}
+	return b.Charge(bytes)
+}
+
 // Available returns the largest n for which a subsequent
 // [Budget.Charge](n) would not return [ErrExceeded].  The value is a
 // hint only: a concurrent Charge may shrink the budget between an
