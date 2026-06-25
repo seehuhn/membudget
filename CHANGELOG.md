@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.4] (2026-06-25)
+
+### Added
+- `Budget.ChargeN` charges for `n` elements of a runtime-computed size,
+  with overflow checking.
+- `ErrInvalid`, returned when a requested size is not a sensible
+  allocation size (negative count or too large to represent).
+
 ## [0.7.3] (2026-05-19)
 
 Initial tagged release.
