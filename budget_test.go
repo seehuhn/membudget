@@ -236,7 +236,7 @@ func TestAllocSlice(t *testing.T) {
 	t.Run("uint16", func(t *testing.T) {
 		b := New(1000)
 		before := b.remaining
-		s, err := AllocSlice[uint16](b, 100)
+		s, err := b.AllocSlice[uint16](100)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -251,7 +251,7 @@ func TestAllocSlice(t *testing.T) {
 	t.Run("pointer", func(t *testing.T) {
 		b := New(1000)
 		before := b.remaining
-		s, err := AllocSlice[*int](b, 4)
+		s, err := b.AllocSlice[*int](4)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +266,7 @@ func TestAllocSlice(t *testing.T) {
 
 	t.Run("exhaustion", func(t *testing.T) {
 		b := New(10)
-		s, err := AllocSlice[uint16](b, 1000)
+		s, err := b.AllocSlice[uint16](1000)
 		if !errors.Is(err, ErrExceeded) {
 			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
@@ -284,19 +284,20 @@ func TestAllocSlice(t *testing.T) {
 				t.Fatal("AllocSlice with nil budget did not panic")
 			}
 		}()
-		_, _ = AllocSlice[uint16](nil, 5)
+		var b *Budget
+		_, _ = b.AllocSlice[uint16](5)
 	})
 
 	t.Run("negative n", func(t *testing.T) {
 		b := New(1000)
-		if _, err := AllocSlice[uint16](b, -1); !errors.Is(err, ErrInvalid) {
+		if _, err := b.AllocSlice[uint16](-1); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
 
 	t.Run("multiplication overflow", func(t *testing.T) {
 		// pick an n where n * sizeof(uint16) overflows
-		s, err := AllocSlice[uint16](New(1<<40), int(^uint(0)>>1))
+		s, err := New(1 << 40).AllocSlice[uint16](int(^uint(0) >> 1))
 		if !errors.Is(err, ErrInvalid) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
