@@ -9,6 +9,7 @@ each allocation, and discarded when the parse completes; the budget
 never grants memory back, so it bounds peak memory at most by the total
 it was sized for.
 
-Copyright (C) 2026 Jochen Voss
+Copyright 2026 Jochen Voss
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This package is distributed under the BSD 3-Clause License; see the
+file LICENSE for the full text.
