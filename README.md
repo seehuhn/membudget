@@ -9,7 +9,5 @@ each allocation and discarded when the parse completes.  Since the
 budget never grants memory back, peak memory use is bounded by the total
 the budget was sized for.
 
-Copyright 2026 Jochen Voss
-
 This package is distributed under the BSD 3-Clause License; see the
 file LICENSE for the full text.
