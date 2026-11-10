@@ -5,9 +5,9 @@
 
 A small Go package providing cumulative memory budgets for parsing
 untrusted input.  A `Budget` is sized at construction, decremented by
-each allocation, and discarded when the parse completes; the budget
-never grants memory back, so it bounds peak memory at most by the total
-it was sized for.
+each allocation and discarded when the parse completes.  Since the
+budget never grants memory back, peak memory use is bounded by the total
+the budget was sized for.
 
 Copyright 2026 Jochen Voss
 
