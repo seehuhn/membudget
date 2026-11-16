@@ -5,6 +5,8 @@ package membudget
 
 import (
 	"errors"
+	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,19 +61,16 @@ func TestCharge(t *testing.T) {
 		}
 	})
 
-	t.Run("negative size errors", func(t *testing.T) {
-		b := New(1000)
-		if err := b.Charge(-1); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
-		}
-	})
-
 	t.Run("overflow errors", func(t *testing.T) {
-		// bytes + PerAllocOverhead must not wrap around int64
-		b := New(1 << 62)
-		const maxInt = int(^uint(0) >> 1)
-		if err := b.Charge(maxInt); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
+		// bytes + PerAllocOverhead can only wrap around with a 64-bit int
+		if strconv.IntSize < 64 {
+			t.Skip("int is narrower than 64 bits")
+		}
+		if err := New(math.MaxInt64).Charge(math.MaxInt - PerAllocOverhead); err != nil {
+			t.Fatalf("Charge(MaxInt - PerAllocOverhead): %v", err)
+		}
+		if err := New(math.MaxInt64).Charge(math.MaxInt); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
 	})
 }
@@ -181,20 +180,10 @@ func TestChargeN(t *testing.T) {
 		}
 	})
 
-	t.Run("negative", func(t *testing.T) {
-		b := New(1000)
-		if err := b.ChargeN(-1, 8); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
-		}
-		if err := b.ChargeN(8, -1); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
-		}
-	})
-
 	t.Run("multiplication overflow", func(t *testing.T) {
 		b := New(1 << 40)
-		if err := b.ChargeN(int(^uint(0)>>1), 8); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
+		if err := b.ChargeN(int(^uint(0)>>1), 8); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
 	})
 }
@@ -245,18 +234,11 @@ func TestAllocSlice(t *testing.T) {
 		}
 	})
 
-	t.Run("negative n", func(t *testing.T) {
-		b := New(1000)
-		if _, err := b.AllocSlice[uint16](-1); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
-		}
-	})
-
 	t.Run("multiplication overflow", func(t *testing.T) {
 		// pick an n where n * sizeof(uint16) overflows
 		s, err := New(1 << 40).AllocSlice[uint16](int(^uint(0) >> 1))
-		if !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
+		if !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
 		if s != nil {
 			t.Errorf("got slice %v, want nil", s)

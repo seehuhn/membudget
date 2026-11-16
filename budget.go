@@ -31,12 +31,10 @@ const (
 )
 
 // ErrExceeded is returned when a charge would push the budget below zero.
+// This includes a charge whose size is too large to be represented.
 var ErrExceeded = errors.New("membudget: budget exceeded")
 
-// ErrInvalid is returned when a requested size cannot be a valid
-// allocation: a negative byte count or element count, or a size so
-// large it cannot be represented.
-var ErrInvalid = errors.New("membudget: invalid size")
+var errNegative = errors.New("membudget: negative argument")
 
 // Budget tracks the remaining memory budget for a single parse.
 // Budget is safe for concurrent use; charges from multiple goroutines
@@ -59,22 +57,18 @@ func New(remaining int64) *Budget {
 
 // Charge subtracts bytes + [PerAllocOverhead] from the budget.  On
 // exhaustion the budget is left unchanged and [ErrExceeded] is
-// returned.  A negative bytes, or one large enough to overflow the
-// internal accounting, returns [ErrInvalid].
+// returned.  bytes must be non-negative.
 func (b *Budget) Charge(bytes int) error {
 	if bytes < 0 {
-		return ErrInvalid
-	}
-	cost := int64(bytes) + PerAllocOverhead
-	if cost < int64(bytes) { // overflow guard
-		return ErrInvalid
+		return errNegative
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.remaining < cost {
+	// remaining >= 0, so the subtraction cannot wrap
+	if b.remaining-PerAllocOverhead < int64(bytes) {
 		return ErrExceeded
 	}
-	b.remaining -= cost
+	b.remaining -= int64(bytes) + PerAllocOverhead
 	return nil
 }
 
@@ -83,14 +77,15 @@ func (b *Budget) Charge(bytes int) error {
 // per-element size is computed at runtime rather than taken from a Go type;
 // use [Budget.AllocSlice] when the element type is statically known.
 //
-// A negative n or size, or a total that overflows, returns [ErrInvalid].
+// n and size must be non-negative.  A total too large to be represented
+// returns [ErrExceeded].
 func (b *Budget) ChargeN(n, size int) error {
 	if n < 0 || size < 0 {
-		return ErrInvalid
+		return errNegative
 	}
 	bytes := n * size
 	if size != 0 && bytes/size != n {
-		return ErrInvalid
+		return ErrExceeded
 	}
 	return b.Charge(bytes)
 }
@@ -117,17 +112,18 @@ func (b *Budget) Available() int64 {
 // map buckets, interface body, or string bytes) must be charged
 // separately when allocated.
 //
-// A negative n, or one whose byte count overflows, returns [ErrInvalid].
+// n must be non-negative.  A byte count too large to be represented
+// returns [ErrExceeded].
 func (b *Budget) AllocSlice[T any](n int) ([]T, error) {
+	if n < 0 {
+		return nil, errNegative
+	}
 	var zero T
 	size := int(unsafe.Sizeof(zero))
-	if n < 0 {
-		return nil, ErrInvalid
-	}
 	// overflow-safe multiplication for the byte count
 	bytes := n * size
 	if size != 0 && bytes/size != n {
-		return nil, ErrInvalid
+		return nil, ErrExceeded
 	}
 	if err := b.Charge(bytes); err != nil {
 		return nil, err
