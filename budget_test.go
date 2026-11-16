@@ -8,45 +8,54 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unsafe"
 )
 
 func TestNew(t *testing.T) {
-	cases := []struct {
-		name string
-		in   int64
-		want int64
-	}{
-		{"zero", 0, 0},
-		{"positive", 1000, 1000},
-		{"negative clamped", -1, 0},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := New(c.in).remaining; got != c.want {
-				t.Errorf("remaining = %d, want %d", got, c.want)
-			}
-		})
-	}
+	t.Run("zero", func(t *testing.T) {
+		if err := New(0).Charge(0); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
+		}
+	})
+
+	t.Run("exact fit", func(t *testing.T) {
+		b := New(1000)
+		if err := b.Charge(1000 - PerAllocOverhead); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if err := b.Charge(0); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
+		}
+	})
+
+	t.Run("one byte over", func(t *testing.T) {
+		b := New(1000)
+		if err := b.Charge(1000 - PerAllocOverhead + 1); !errors.Is(err, ErrExceeded) {
+			t.Fatalf("err = %v, want ErrExceeded", err)
+		}
+	})
 }
 
 func TestCharge(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		b := New(1000)
+		before := b.Available()
 		if err := b.Charge(100); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := b.remaining, int64(1000-100-perAllocOverhead); got != want {
-			t.Errorf("remaining = %d, want %d", got, want)
+		if got, want := before-b.Available(), int64(100+PerAllocOverhead); got != want {
+			t.Errorf("consumed = %d, want %d", got, want)
 		}
 	})
 
 	t.Run("exhaustion leaves budget unchanged", func(t *testing.T) {
-		b := New(10)
-		if err := b.Charge(100); !errors.Is(err, ErrExceeded) {
+		b := New(1000)
+		before := b.Available()
+		if err := b.Charge(1000); !errors.Is(err, ErrExceeded) {
 			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
-		if b.remaining != 10 {
-			t.Errorf("remaining = %d, want 10", b.remaining)
+		if got := b.Available(); got != before {
+			t.Errorf("Available = %d, want %d", got, before)
 		}
 	})
 
@@ -58,22 +67,12 @@ func TestCharge(t *testing.T) {
 	})
 
 	t.Run("overflow errors", func(t *testing.T) {
-		// bytes + perAllocOverhead must not wrap around int64
+		// bytes + PerAllocOverhead must not wrap around int64
 		b := New(1 << 62)
 		const maxInt = int(^uint(0) >> 1)
 		if err := b.Charge(maxInt); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
-	})
-
-	t.Run("nil receiver panics", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("Charge on nil receiver did not panic")
-			}
-		}()
-		var b *Budget
-		_ = b.Charge(1)
 	})
 }
 
@@ -81,8 +80,8 @@ func TestAvailable(t *testing.T) {
 	t.Run("predicts next charge", func(t *testing.T) {
 		b := New(1000)
 		// Available reports the largest n that Charge(n) accepts, so
-		// the perAllocOverhead surcharge is already deducted.
-		if got, want := b.Available(), int64(1000-perAllocOverhead); got != want {
+		// the PerAllocOverhead surcharge is already deducted.
+		if got, want := b.Available(), int64(1000-PerAllocOverhead); got != want {
 			t.Errorf("Available = %d, want %d", got, want)
 		}
 		// charging exactly Available must succeed and leave Available at zero
@@ -96,27 +95,17 @@ func TestAvailable(t *testing.T) {
 
 	t.Run("clamps at zero", func(t *testing.T) {
 		// remaining below the surcharge can never satisfy any Charge
-		b := New(perAllocOverhead - 1)
+		b := New(PerAllocOverhead - 1)
 		if got := b.Available(); got != 0 {
 			t.Errorf("Available = %d, want 0", got)
 		}
-	})
-
-	t.Run("nil receiver panics", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("Available on nil receiver did not panic")
-			}
-		}()
-		var b *Budget
-		_ = b.Available()
 	})
 }
 
 func TestSurcharge(t *testing.T) {
 	// many tiny charges drain the budget faster than the sum of the
-	// payloads, by perAllocOverhead per call.
-	b := New(10 * perAllocOverhead)
+	// payloads, by PerAllocOverhead per call.
+	b := New(10 * PerAllocOverhead)
 	for i := range 10 {
 		if err := b.Charge(0); err != nil {
 			t.Fatalf("charge %d: %v", i, err)
@@ -134,9 +123,9 @@ func TestConcurrentCharge(t *testing.T) {
 	const (
 		goroutines = 32
 		perCall    = 8
-		// each Charge costs perCall + perAllocOverhead bytes
+		// each Charge costs perCall + PerAllocOverhead bytes
 	)
-	costPerCall := int64(perCall + perAllocOverhead)
+	costPerCall := int64(perCall + PerAllocOverhead)
 	const want = 100 // expected successful charges
 	b := New(costPerCall * want)
 
@@ -157,19 +146,19 @@ func TestConcurrentCharge(t *testing.T) {
 	if got := success.Load(); got != want {
 		t.Errorf("successful charges = %d, want %d", got, want)
 	}
-	if b.remaining != 0 {
-		t.Errorf("remaining = %d, want 0", b.remaining)
+	if got := b.Available(); got != 0 {
+		t.Errorf("Available = %d, want 0", got)
 	}
 }
 
 func TestChargeN(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		b := New(1000)
-		before := b.remaining
+		before := b.Available()
 		if err := b.ChargeN(10, 8); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := before-b.remaining, int64(10*8+perAllocOverhead); got != want {
+		if got, want := before-b.Available(), int64(10*8+PerAllocOverhead); got != want {
 			t.Errorf("consumed = %d, want %d", got, want)
 		}
 	})
@@ -182,12 +171,13 @@ func TestChargeN(t *testing.T) {
 	})
 
 	t.Run("exhaustion", func(t *testing.T) {
-		b := New(10)
+		b := New(1000)
+		before := b.Available()
 		if err := b.ChargeN(1000, 8); !errors.Is(err, ErrExceeded) {
 			t.Fatalf("err = %v, want ErrExceeded", err)
 		}
-		if b.remaining != 10 {
-			t.Errorf("remaining = %d, want 10", b.remaining)
+		if got := b.Available(); got != before {
+			t.Errorf("Available = %d, want %d", got, before)
 		}
 	})
 
@@ -207,22 +197,12 @@ func TestChargeN(t *testing.T) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
-
-	t.Run("nil receiver panics", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("ChargeN on nil receiver did not panic")
-			}
-		}()
-		var b *Budget
-		_ = b.ChargeN(1, 1)
-	})
 }
 
 func TestAllocSlice(t *testing.T) {
 	t.Run("uint16", func(t *testing.T) {
 		b := New(1000)
-		before := b.remaining
+		before := b.Available()
 		s, err := b.AllocSlice[uint16](100)
 		if err != nil {
 			t.Fatal(err)
@@ -230,14 +210,14 @@ func TestAllocSlice(t *testing.T) {
 		if len(s) != 100 {
 			t.Errorf("len = %d, want 100", len(s))
 		}
-		if got, want := before-b.remaining, int64(100*2+perAllocOverhead); got != want {
+		if got, want := before-b.Available(), int64(100*2+PerAllocOverhead); got != want {
 			t.Errorf("consumed = %d, want %d", got, want)
 		}
 	})
 
 	t.Run("pointer", func(t *testing.T) {
 		b := New(1000)
-		before := b.remaining
+		before := b.Available()
 		s, err := b.AllocSlice[*int](4)
 		if err != nil {
 			t.Fatal(err)
@@ -245,14 +225,14 @@ func TestAllocSlice(t *testing.T) {
 		if len(s) != 4 {
 			t.Errorf("len = %d, want 4", len(s))
 		}
-		// 8 bytes per pointer on 64-bit
-		if got, want := before-b.remaining, int64(4*8+perAllocOverhead); got != want {
+		if got, want := before-b.Available(), int64(4*unsafe.Sizeof(uintptr(0))+PerAllocOverhead); got != want {
 			t.Errorf("consumed = %d, want %d", got, want)
 		}
 	})
 
 	t.Run("exhaustion", func(t *testing.T) {
-		b := New(10)
+		b := New(1000)
+		before := b.Available()
 		s, err := b.AllocSlice[uint16](1000)
 		if !errors.Is(err, ErrExceeded) {
 			t.Fatalf("err = %v, want ErrExceeded", err)
@@ -260,19 +240,9 @@ func TestAllocSlice(t *testing.T) {
 		if s != nil {
 			t.Errorf("got slice %v, want nil", s)
 		}
-		if b.remaining != 10 {
-			t.Errorf("remaining = %d, want 10", b.remaining)
+		if got := b.Available(); got != before {
+			t.Errorf("Available = %d, want %d", got, before)
 		}
-	})
-
-	t.Run("nil receiver panics", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("AllocSlice with nil budget did not panic")
-			}
-		}()
-		var b *Budget
-		_, _ = b.AllocSlice[uint16](5)
 	})
 
 	t.Run("negative n", func(t *testing.T) {

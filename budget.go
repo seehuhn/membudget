@@ -6,9 +6,6 @@
 // each allocation, and discarded when the parse completes; the budget
 // never grants memory back, so it bounds peak memory at most by the
 // total it was sized for.
-//
-// [Budget] is safe for concurrent use; charges from multiple
-// goroutines are serialised internally.
 package membudget
 
 import (
@@ -18,11 +15,13 @@ import (
 )
 
 const (
-	// perAllocOverhead is the fixed cost added to every Charge, to
-	// account for slice-header and heap-block overhead.  Without this
-	// surcharge an attacker can amplify input size by issuing many
-	// tiny allocations, each costing far more than its payload.
-	perAllocOverhead = 32
+	// PerAllocOverhead is the fixed cost which every charge adds to its
+	// byte count, to account for slice-header and heap-block overhead.
+	// This applies to [Budget.Charge], [Budget.ChargeN] and
+	// [Budget.AllocSlice] alike.  Without this surcharge an attacker
+	// can amplify input size by issuing many tiny allocations, each
+	// costing far more than its payload.
+	PerAllocOverhead = 32
 
 	// MapEntryOverhead is the budget cost a caller should charge when
 	// inserting a new entry into a Go map: the key, the slice or
@@ -31,14 +30,12 @@ const (
 	MapEntryOverhead = 48
 )
 
-// ErrExceeded is returned by [Budget.Charge] when an allocation would
-// push the budget below zero.
+// ErrExceeded is returned when a charge would push the budget below zero.
 var ErrExceeded = errors.New("membudget: budget exceeded")
 
-// ErrInvalid is returned when a requested size is not a sensible
-// allocation size: a negative byte count or element count, or a size so
-// large it cannot be represented.  It signals a caller bug rather than
-// an exhausted budget, so it is distinct from [ErrExceeded].
+// ErrInvalid is returned when a requested size cannot be a valid
+// allocation: a negative byte count or element count, or a size so
+// large it cannot be represented.
 var ErrInvalid = errors.New("membudget: invalid size")
 
 // Budget tracks the remaining memory budget for a single parse.
@@ -53,24 +50,22 @@ type Budget struct {
 	remaining int64
 }
 
-// New returns a Budget with the given byte budget.  Negative values
-// are treated as zero.
+// New returns a Budget which allows charges totalling at most remaining
+// bytes, where each charge also costs [PerAllocOverhead].  remaining
+// must be non-negative.
 func New(remaining int64) *Budget {
-	if remaining < 0 {
-		remaining = 0
-	}
 	return &Budget{remaining: remaining}
 }
 
-// Charge subtracts (bytes + perAllocOverhead) from the budget.  On
+// Charge subtracts bytes + [PerAllocOverhead] from the budget.  On
 // exhaustion the budget is left unchanged and [ErrExceeded] is
 // returned.  A negative bytes, or one large enough to overflow the
-// internal accounting, returns [ErrInvalid].  Panics if b is nil.
+// internal accounting, returns [ErrInvalid].
 func (b *Budget) Charge(bytes int) error {
 	if bytes < 0 {
 		return ErrInvalid
 	}
-	cost := int64(bytes) + perAllocOverhead
+	cost := int64(bytes) + PerAllocOverhead
 	if cost < int64(bytes) { // overflow guard
 		return ErrInvalid
 	}
@@ -89,7 +84,6 @@ func (b *Budget) Charge(bytes int) error {
 // use [Budget.AllocSlice] when the element type is statically known.
 //
 // A negative n or size, or a total that overflows, returns [ErrInvalid].
-// Panics if b is nil.
 func (b *Budget) ChargeN(n, size int) error {
 	if n < 0 || size < 0 {
 		return ErrInvalid
@@ -102,21 +96,21 @@ func (b *Budget) ChargeN(n, size int) error {
 }
 
 // Available returns the largest n for which a subsequent
-// [Budget.Charge](n) would not return [ErrExceeded].  The value is a
-// hint only: a concurrent Charge may shrink the budget between an
-// Available call and a subsequent Charge, so callers must still treat
-// the eventual Charge as authoritative.  Panics if b is nil.
+// [Budget.Charge](n) would not return [ErrExceeded], or 0 if there is
+// no such n.  The value is a hint only: a concurrent Charge may
+// shrink the budget between an Available call and a subsequent Charge,
+// so callers must still treat the eventual Charge as authoritative.
 func (b *Budget) Available() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.remaining <= perAllocOverhead {
+	if b.remaining <= PerAllocOverhead {
 		return 0
 	}
-	return b.remaining - perAllocOverhead
+	return b.remaining - PerAllocOverhead
 }
 
 // AllocSlice charges b for a slice of n elements of T and, if the
-// charge succeeds, returns make([]T, n).  Panics if b is nil.
+// charge succeeds, returns make([]T, n).
 //
 // For slice, map, interface, or string element types, only the header
 // size is charged here; the referenced elements (slice backing array,
