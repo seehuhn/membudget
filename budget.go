@@ -4,8 +4,8 @@
 // Package membudget provides a cumulative memory budget for parsing
 // untrusted input.  A budget is sized at construction, decremented by
 // each allocation, and discarded when the parse completes; the budget
-// never grants memory back, so it bounds peak memory at most by the
-// total it was sized for.
+// never grants memory back, so peak memory stays within the total it
+// was sized for.
 package membudget
 
 import (
@@ -37,12 +37,9 @@ var ErrExceeded = errors.New("membudget: budget exceeded")
 var errNegative = errors.New("membudget: negative argument")
 
 // Budget tracks the remaining memory budget for a single parse.
-// Budget is safe for concurrent use; charges from multiple goroutines
-// are serialised internally.
+// Budget is safe for concurrent use.
 //
-// Callers that genuinely do not want a cap should construct a
-// permissive budget with [New] and a generous limit; a nil *Budget is
-// not supported.
+// A caller which wants no cap can use New(math.MaxInt64).
 type Budget struct {
 	mu        sync.Mutex
 	remaining int64
@@ -115,17 +112,8 @@ func (b *Budget) Available() int64 {
 // n must be non-negative.  A byte count too large to be represented
 // returns [ErrExceeded].
 func (b *Budget) AllocSlice[T any](n int) ([]T, error) {
-	if n < 0 {
-		return nil, errNegative
-	}
 	var zero T
-	size := int(unsafe.Sizeof(zero))
-	// overflow-safe multiplication for the byte count
-	bytes := n * size
-	if size != 0 && bytes/size != n {
-		return nil, ErrExceeded
-	}
-	if err := b.Charge(bytes); err != nil {
+	if err := b.ChargeN(n, int(unsafe.Sizeof(zero))); err != nil {
 		return nil, err
 	}
 	return make([]T, n), nil
